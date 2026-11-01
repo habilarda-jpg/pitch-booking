@@ -50,6 +50,16 @@ def test_domain_errors_map_to_http_status_codes(client):
     assert client.post("/reservations", json={**body, "start": "2026-11-02T05:00:00"}).status_code == 400
 
 
+def test_cors_allows_vite_dev_server(client):
+    response = client.options(
+        "/pitches",
+        headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"},
+    )
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    other = client.get("/pitches", headers={"Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in other.headers
+
+
 def test_owner_creates_pitch_and_changes_price(client):
     created = client.post("/pitches", json={"name": "Yeni Saha", "owner_id": 7, "hourly_price": "800"})
     assert created.status_code == 201

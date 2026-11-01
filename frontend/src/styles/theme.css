@@ -1,0 +1,55 @@
+:root {
+  --color-bg: #f3f7f4;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f7faf8;
+  --color-border: #dce6df;
+  --color-border-strong: #c3d3c8;
+
+  --color-primary: #15803d;
+  --color-primary-hover: #116a32;
+  --color-primary-soft: #eef8f1;
+  --color-primary-fresh: #22c55e;
+  --color-on-primary: #ffffff;
+
+  --color-heading: #14532d;
+  --color-text: #1b2a21;
+  --color-text-muted: #56635b;
+  --color-text-disabled: #5c6661;
+  --color-disabled-bg: #eceff0;
+  --color-disabled-border: #d9dedc;
+
+  --color-focus: #0b3d1f;
+
+  --color-pending-bg: #fef3c7;
+  --color-pending-text: #8a3b0c;
+  --color-pending-border: #f6d98a;
+  --color-confirmed-bg: #dcfce7;
+  --color-confirmed-text: #14532d;
+  --color-confirmed-border: #a7e3bc;
+  --color-cancelled-bg: #eceff1;
+  --color-cancelled-text: #4b5563;
+  --color-cancelled-border: #d5d9de;
+
+  --color-danger: #b42318;
+  --color-danger-hover: #912018;
+  --color-danger-soft: #fdecea;
+  --color-danger-border: #f4c4bf;
+  --color-info-bg: #eef6f1;
+  --color-info-border: #cfe3d6;
+
+  --color-pitch-stripe-a: #1f9d55;
+  --color-pitch-stripe-b: #23ad5e;
+  --color-pitch-line: rgba(255, 255, 255, 0.75);
+
+  --shadow-sm: 0 1px 2px rgba(20, 83, 45, 0.06);
+  --shadow-md: 0 4px 16px rgba(20, 83, 45, 0.08), 0 1px 3px rgba(20, 83, 45, 0.06);
+  --shadow-lg: 0 12px 32px rgba(20, 83, 45, 0.12);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+}

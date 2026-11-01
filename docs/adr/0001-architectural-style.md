@@ -47,10 +47,36 @@ Dependency rule: **dependencies only point inwards.**
 - `bootstrap.py` is the single **composition root** that wires concrete adapters to the
   ports.
 
+## Presentation: a separate frontend client
+
+The user interface is a **separate presentation client** in `frontend/`, built with
+Vite, React and TypeScript. It is **not** part of the hexagon. It is just another
+*driving actor*, like Swagger UI, `curl` or the pytest `TestClient`:
+
+```
+ Browser (React SPA, :5173) ──HTTP/JSON──▶ api/ (FastAPI, :8000) ──▶ application/ ──▶ domain/
+```
+
+- The frontend talks to the backend **only over HTTP/JSON**, through the public REST
+  endpoints. All calls live in `frontend/src/api/`. It never imports Python code and never
+  re-implements business rules. Prices, availability, overlap checks and state transitions
+  are always decided by the server. The UI only shows the results and the server's error
+  messages.
+- The single backend change needed was **CORS** for the Vite dev server origin
+  (`http://localhost:5173`) in `api/app.py`. No domain or application code changed.
+- "My reservations" is kept in the browser (`localStorage` holds the IDs, which are then
+  loaded with `GET /reservations/{id}`). There are no user accounts in Sprint A, so this
+  avoids inventing a customer-listing endpoint the backend design doesn't have yet.
+- Consequences: the frontend and backend can be developed, run and deployed
+  independently. A mobile app could reuse the same API unchanged. The cost is two
+  processes in development and an explicit API contract (`frontend/src/api/types.ts`
+  mirrors `api/schemas.py`) that must be kept in sync by hand.
+
 ## Alternatives considered
 
 | Alternative | Why not (for now) |
 |---|---|
+| **Plain MVC**: Model = `domain/`, Controller = `api/` (FastAPI routes), View = the React client | The roles map cleanly onto our system, and in effect we *do* follow MVC at the delivery edge: React renders, the routes take input. But plain MVC says nothing about **where the use-case logic goes, or which way dependencies point**. In practice controllers grow fat: they orchestrate repositories, call the payment SDK and send e-mails directly, which recreates the naive "God service" we refactored away. MVC also lets the model depend on the ORM or database. Hexagonal keeps MVC's separation of presentation, and adds an explicit **application layer** (use cases) plus **ports** so the domain does not depend on persistence, payment or notification technology. So MVC describes only the outer UI/HTTP edge of our design; hexagonal governs the inside. |
 | **Classic layered (N-tier)**: API → Service → DAO → DB | Simple, but the service layer usually depends directly on the DAO/DB, so the database becomes the centre of the design. Swapping persistence or payment is harder, and domain logic tends to leak into services. Hexagonal keeps the same simplicity but inverts those dependencies. |
 | **Microservices**, e.g. Booking, Payment, Notification services | Brings network calls, distributed transactions (pay + confirm), deployment and monitoring overhead. That is not justified for one team, one database and no real load yet. |
 | **Event-driven architecture with a message broker** | Notifications are already decoupled through an in-process Observer. A broker (RabbitMQ/Kafka) would add infrastructure with no current benefit. |
@@ -60,7 +86,7 @@ Dependency rule: **dependencies only point inwards.**
 
 **Positive**
 
-- The domain and use cases are tested without FastAPI or a database: 40 fast tests.
+- The domain and use cases are tested without FastAPI or a database: fast, isolated pytest tests.
 - Swapping in-memory storage for PostgreSQL or FakeBank for a real provider (iyzico,
   Stripe…) means writing a new adapter and changing `bootstrap.py`. No use-case code
   changes.

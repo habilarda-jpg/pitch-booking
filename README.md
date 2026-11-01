@@ -2,28 +2,80 @@
 
 Course project for **Software Design and Architecture**, Sprint A (Modules 1–5).
 
-A small reservation system for football pitches:
+## Design brief
 
-- **Customers** browse pitches, see free hourly slots with their prices, create a
-  reservation, pay (mock bank) and cancel.
-- **Pitch owners** register pitches and change their hourly price.
+**Problem.** Booking a halı saha (5–7-a-side football pitch) is usually done by phone or
+WhatsApp. Players can't see which hours are free or what a given hour costs, owners keep
+schedules on paper, and the same hour is easily promised to two teams. We want a simple
+online system where players see real availability and prices, and owners keep control of
+their pitches and prices.
+
+**Main use cases**
+
+| Actor | Use case |
+|---|---|
+| Customer | Browse pitches |
+| Customer | See the free hourly slots of a pitch for a date, with the price of each slot |
+| Customer | Reserve one or more consecutive hours (reservation starts as *Pending*) |
+| Customer | Pay for a reservation with the mock payment provider (*Pending → Confirmed*) |
+| Customer | Cancel a reservation (*Pending/Confirmed → Cancelled*, the slot is freed) |
+| Pitch owner | Register a pitch and change its hourly price (only the owner may) |
+
+**Key quality attributes**
+
+| Attribute | How it is addressed |
+|---|---|
+| **Consistency: no double booking** | Every reservation is checked against active reservations for overlap on the server (`Reservation.overlaps`, `ReservationService.create_reservation`). Cancelled reservations release their slot. The UI never decides availability. |
+| **Correct lifecycle** | The State pattern only allows valid transitions. A cancelled reservation can never be paid, and the card is not charged unless the transition is allowed. |
+| **Modifiability** | Hexagonal layers and ports. New tariffs (Strategy), payment providers (Adapter), storage (Repository) or notification channels (Observer) are added as new classes. |
+| **Testability** | The domain and use cases have no framework or I/O dependencies, so pytest runs fast without a server or database. |
+| **Usability and accessibility** | Clear slot grid, prices on every slot, status badges, friendly error messages taken from the API, confirmation before cancelling, keyboard focus styles, labelled inputs, WCAG AA contrast. |
 
 Pricing: weekday 09–18 = base price · weekday 18–24 = base × 1.3 (peak) · weekend = base × 1.5.
 Opening hours are 09:00–24:00, and a reservation is 1–3 whole hours long.
-Lifecycle: `PENDING → CONFIRMED → CANCELLED` (or `PENDING → CANCELLED`).
 
-Tech: Python 3.12, [uv](https://docs.astral.sh/uv/), FastAPI, pytest. There is no
-real database yet; all data is in memory and is lost on restart.
+Tech: Python 3.12, [uv](https://docs.astral.sh/uv/), FastAPI, pytest · Vite, React 19,
+TypeScript, plain CSS. There is no real database yet; data lives in memory and is lost
+when the backend restarts.
 
 ## How to run
 
-```bash
+> **Windows note:** on this machine Application Control blocks the `uvicorn.exe` and
+> `pytest.exe` launchers that uv puts in `.venv\Scripts`. Always start them as Python
+> modules (`python -m …`), as shown below.
+
+You need **uv** (Python 3.12 is installed automatically) and **Node.js 20.19+ or 22.12+**.
+
+### Backend and frontend together (two terminals)
+
+**Terminal 1: backend API** (from the project root):
+
+```powershell
 uv sync
-uv run uvicorn pitch_booking.api.app:app --reload
+uv run python -m uvicorn pitch_booking.api.app:app --reload
 ```
 
-Open <http://127.0.0.1:8000/docs> for the interactive Swagger UI. Two demo pitches are
-seeded on startup.
+The API runs on <http://localhost:8000>, and the interactive docs are at
+<http://localhost:8000/docs>. Two demo pitches are seeded on startup.
+
+**Terminal 2: frontend** (from the project root):
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open <http://localhost:5173>. The frontend calls the API at `http://localhost:8000` by
+default. To use another address, copy `frontend/.env.example` to `frontend/.env.local`
+and change `VITE_API_URL`. The backend allows CORS from `http://localhost:5173` only.
+
+Production build of the frontend: `npm run build` (output goes to `frontend/dist/`).
+
+Mock bank test cards: `4242 4242 4242 4242` is approved and `4000 0000 0000 0002` is
+declined. Any 16-digit card ending in `0002` is declined.
+
+### API endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -36,22 +88,14 @@ seeded on startup.
 | POST | `/reservations/{id}/pay` | Pay with the mock bank, which sets status `CONFIRMED` |
 | POST | `/reservations/{id}/cancel` | Cancel (status `CANCELLED`, slot becomes free again) |
 
-Mock bank test cards: `4242424242424242` is approved and `4000000000000002` is declined
-(any 16-digit card ending in `0002` is declined).
-
-Example:
-
-```bash
-curl -X POST localhost:8000/reservations -H "Content-Type: application/json" \
-  -d '{"pitch_id": 1, "customer_email": "ali@example.com", "start": "2026-11-02T20:00:00", "hours": 1}'
-curl -X POST localhost:8000/reservations/1/pay -H "Content-Type: application/json" \
-  -d '{"card_number": "4242424242424242"}'
-```
+Errors return `{"detail": "..."}` with 400 (invalid input), 402 (payment declined),
+403 (not the owner), 404 (not found) or 409 (slot taken / invalid state transition).
+The frontend shows the `detail` text to the user.
 
 ## How to test
 
-```bash
-uv run pytest
+```powershell
+uv run python -m pytest
 ```
 
 | Test file | Covers |
@@ -60,7 +104,9 @@ uv run pytest
 | `tests/test_reservation_state.py` | All valid and invalid state transitions |
 | `tests/test_slot_availability.py` | Daily slots, booked or cancelled slots, overlap, opening-hours validation |
 | `tests/test_reservation_service.py` | Use cases, payment adapter, observers, owner-only price change |
-| `tests/test_api.py` | End-to-end HTTP flow and error → status-code mapping |
+| `tests/test_api.py` | End-to-end HTTP flow, error → status-code mapping, CORS for the Vite origin |
+
+Frontend type-check and build: `cd frontend && npm run build`.
 
 ## Project structure
 
@@ -85,8 +131,18 @@ src/pitch_booking/
 │   ├── fakebank_sdk.py    pretend third-party payment SDK
 │   ├── payment_adapter.py Adapter: FakeBankClient → PaymentGateway
 │   └── notifications.py   EmailNotifier, AuditLog observers
-├── api/               FastAPI (schemas, routes, app + error mapping)
+├── api/               FastAPI (schemas, routes, app + error mapping + CORS)
 └── bootstrap.py       composition root, wires everything together
+frontend/              separate React client (talks to the API over HTTP only)
+├── index.html
+└── src/
+    ├── api/               all HTTP calls: client.ts, pitches.ts, reservations.ts, types.ts
+    ├── pages/             PitchListPage, PitchDetailPage, MyReservationsPage
+    ├── components/        NavBar, ReservationCard, StatusBadge, Feedback (alerts, loading)
+    ├── styles/            theme.css (all color variables), app.css
+    ├── router.ts          tiny hash router
+    ├── storage.ts         remembers "my reservations" IDs in localStorage
+    └── format.ts          price, date and time formatting
 tests/
 docs/
 ├── adr/0001-architectural-style.md
@@ -105,7 +161,9 @@ docs/
 | 4a | M4 | **Strategy**: pricing | `src/pitch_booking/domain/pricing.py` |
 | 4b | M4 | **State**: reservation lifecycle | `src/pitch_booking/domain/reservation.py` |
 | 4c | M4 | **Observer**: notifications | `src/pitch_booking/application/event_publisher.py`, `src/pitch_booking/infrastructure/notifications.py` |
-| 5 | M5 | Architectural style ADR (hexagonal monolith; services deferred to M6–M7) | `docs/adr/0001-architectural-style.md` |
+| 5 | M5 | Architectural style ADR (hexagonal monolith; MVC compared; services deferred to M6–M7) | `docs/adr/0001-architectural-style.md` |
+| 6 | M5 | **Frontend as a separate presentation client** (React view over the REST API) | `frontend/` (all API calls in `frontend/src/api/`); CORS in `src/pitch_booking/api/app.py`; rationale in the ADR section *Presentation: a separate frontend client* |
+| 7 | — | Frontend screens: pitch list, slots and booking, my reservations (pay/cancel) | `frontend/src/pages/PitchListPage.tsx`, `PitchDetailPage.tsx`, `MyReservationsPage.tsx` |
 | — | — | Tests: pricing, state transitions, slot availability | `tests/test_pricing.py`, `tests/test_reservation_state.py`, `tests/test_slot_availability.py` |
 
 ## Design patterns at a glance
@@ -129,7 +187,23 @@ docs/
   and `ReservationCancelled` events. `EmailNotifier` and `AuditLog` subscribe to them in
   `bootstrap.py`.
 
+## Frontend design notes
+
+- **Palette:** white and very light green-gray surfaces, one pitch-green primary
+  (`#15803d`) for buttons, links and active states, a dark green (`#14532d`) for headings,
+  and neutral grays for secondary text. Every color is a CSS variable in
+  `frontend/src/styles/theme.css`; `app.css` uses only those variables.
+- **Slots:** a grid of large buttons. Available = green outline, selected = solid green,
+  booked or past = grayed out and disabled. Each slot shows its price.
+- **Status badges:** Pending = amber, Confirmed = green, Cancelled = gray.
+- **Feedback:** loading spinners, success and error alerts that show the API's `detail`
+  text, and an inline "Cancel this reservation?" confirmation.
+- **Accessibility:** labelled inputs, visible focus rings, a skip link, `aria-pressed` on
+  slots, and text/background contrast of at least 4.5:1.
+- **Responsive:** the layout goes from two columns (slots and booking panel) on desktop
+  to one column on mobile, with a simple sticky top navigation.
+
 ## Code conventions
 
-The Python source contains no comments or docstrings by design. Explanations live in this
-README and in `docs/`.
+The source code (Python, TypeScript and CSS) contains no comments or docstrings by
+design. Explanations live in this README and in `docs/`.
