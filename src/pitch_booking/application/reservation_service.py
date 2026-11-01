@@ -1,83 +1,67 @@
-from datetime import datetime, timedelta
-from decimal import Decimal
+from datetime import datetime
 
-from pitch_booking.domain.models import Pitch, Reservation
+from pitch_booking.application.event_publisher import EventPublisher
+from pitch_booking.application.ports import (
+    PaymentGateway,
+    PitchRepository,
+    ReservationRepository,
+)
+from pitch_booking.domain.errors import SlotUnavailableError
+from pitch_booking.domain.events import (
+    ReservationCancelled,
+    ReservationConfirmed,
+    ReservationCreated,
+)
+from pitch_booking.domain.factories import ReservationFactory
+from pitch_booking.domain.reservation import Reservation
 
 
 class ReservationService:
-    def __init__(self) -> None:
-        self.pitches: dict[int, Pitch] = {}
-        self.reservations: dict[int, Reservation] = {}
-        self._next_id = 1
-        self.sent_emails: list[str] = []
-
-    def add_pitch(self, pitch: Pitch) -> None:
-        self.pitches[pitch.id] = pitch
+    def __init__(
+        self,
+        pitches: PitchRepository,
+        reservations: ReservationRepository,
+        factory: ReservationFactory,
+        payment_gateway: PaymentGateway,
+        publisher: EventPublisher,
+    ) -> None:
+        self._pitches = pitches
+        self._reservations = reservations
+        self._factory = factory
+        self._payment_gateway = payment_gateway
+        self._publisher = publisher
 
     def create_reservation(
         self, pitch_id: int, customer_email: str, start: datetime, hours: int = 1
     ) -> Reservation:
-        if pitch_id not in self.pitches:
-            raise ValueError("Pitch not found")
-        if start.minute != 0 or start.second != 0:
-            raise ValueError("Reservations must start on the hour")
-        pitch = self.pitches[pitch_id]
-
-        end = start + timedelta(hours=hours)
-        for r in self.reservations.values():
-            if r.pitch_id == pitch_id and r.status != "CANCELLED":
-                if start < r.end and r.start < end:
-                    raise ValueError("Slot already booked")
-
-        price = Decimal("0")
-        for h in range(hours):
-            t = start + timedelta(hours=h)
-            if t.weekday() >= 5:
-                price += pitch.hourly_price * Decimal("1.5")
-            elif 18 <= t.hour < 24:
-                price += pitch.hourly_price * Decimal("1.3")
-            else:
-                price += pitch.hourly_price
-
-        reservation = Reservation(
-            id=self._next_id,
-            pitch_id=pitch_id,
-            customer_email=customer_email,
-            start=start,
-            hours=hours,
-            price=price,
+        pitch = self._pitches.get(pitch_id)
+        reservation = self._factory.create(
+            self._reservations.next_id(), pitch, customer_email, start, hours
         )
-        self.reservations[reservation.id] = reservation
-        self._next_id += 1
-
-        self.sent_emails.append(
-            f"To: {customer_email} | Your reservation #{reservation.id} at "
-            f"{pitch.name} on {start:%Y-%m-%d %H:%M} is pending. Price: {price} TL"
-        )
-        print(f"[EMAIL] sent to {customer_email}")
+        existing = self._reservations.list_for_pitch(pitch_id)
+        if any(r.overlaps(reservation.start, reservation.end) for r in existing):
+            raise SlotUnavailableError("Slot already booked")
+        self._reservations.save(reservation)
+        self._publisher.publish(ReservationCreated(reservation))
         return reservation
 
+    def get_reservation(self, reservation_id: int) -> Reservation:
+        return self._reservations.get(reservation_id)
+
     def pay(self, reservation_id: int, card_number: str) -> Reservation:
-        reservation = self.reservations[reservation_id]
-        if reservation.status != "PENDING":
-            raise ValueError(f"Cannot pay a {reservation.status} reservation")
-
-        if not card_number.startswith("4") or len(card_number) != 16:
-            raise ValueError("Payment declined")
-        print(f"[FAKEBANK] charged {reservation.price} TL")
-
-        reservation.status = "CONFIRMED"
-        self.sent_emails.append(
-            f"To: {reservation.customer_email} | Reservation #{reservation.id} confirmed."
+        reservation = self._reservations.get(reservation_id)
+        reservation.ensure_can_confirm()
+        transaction_id = self._payment_gateway.charge(
+            reservation.price, card_number, f"reservation-{reservation.id}"
         )
+        reservation.confirm(transaction_id)
+        self._reservations.save(reservation)
+        self._publisher.publish(ReservationConfirmed(reservation))
         return reservation
 
     def cancel(self, reservation_id: int) -> Reservation:
-        reservation = self.reservations[reservation_id]
-        if reservation.status == "CANCELLED":
-            raise ValueError("Reservation already cancelled")
-        reservation.status = "CANCELLED"
-        self.sent_emails.append(
-            f"To: {reservation.customer_email} | Reservation #{reservation.id} cancelled."
-        )
+        reservation = self._reservations.get(reservation_id)
+        reservation.cancel()
+        self._reservations.save(reservation)
+        self._publisher.publish(ReservationCancelled(reservation))
         return reservation
